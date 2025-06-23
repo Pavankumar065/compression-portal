@@ -1,0 +1,24 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# build outputs
+build/
+dist/
+
+# Environment variables (e.g., if you use .env for API keys)
+.env
+
+# Operating System specific files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+# Project-specific temporary directories
+uploads/
+compressed/
