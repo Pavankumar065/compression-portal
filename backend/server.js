@@ -3,7 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const zlib = require('zlib'); 
+const zlib = require('zlib');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,33 +49,33 @@ const rleCompress = (buffer) => {
             if (buffer[j] === currentByte) {
                 runLength++;
             } else {
-                break; 
+                break;
             }
         }
+
         if (runLength >= 2) {
             output.push((runLength - 1) | 0x80);
             output.push(currentByte);
             i += runLength;
         } else {
-    
             let literalCount = 0;
             const literalStartIdx = i;
 
             while (
-                (i < buffer.length) && 
-                (literalCount < RLE_MAX_COUNT) && 
+                (i < buffer.length) &&
+                (literalCount < RLE_MAX_COUNT) &&
                 !(i + 1 < buffer.length && buffer[i] === buffer[i + 1])
             ) {
                 literalCount++;
                 i++;
             }
-         
+            
             if (literalCount === 0 && literalStartIdx < buffer.length) {
-                literalCount = 1; 
-                i = literalStartIdx + 1; 
+                literalCount = 1;
+                i = literalStartIdx + 1;
             }
 
-            output.push(literalCount - 1); 
+            output.push(literalCount - 1);
             for (let k = 0; k < literalCount; k++) {
                 output.push(buffer[literalStartIdx + k]);
             }
@@ -90,26 +90,26 @@ const rleDecompress = (buffer) => {
     let i = 0;
 
     while (i < buffer.length) {
-        const controlByte = buffer[i++]; 
+        const controlByte = buffer[i++];
 
-        if (controlByte & 0x80) { 
-            const runLength = (controlByte & 0x7F) + 1; 
+        if (controlByte & 0x80) {
+            const runLength = (controlByte & 0x7F) + 1;
             if (i >= buffer.length) {
                 throw new Error("Malformed RLE data: run byte missing after control byte.");
             }
-            const byteToRepeat = buffer[i++]; 
+            const byteToRepeat = buffer[i++];
             for (let j = 0; j < runLength; j++) {
                 output.push(byteToRepeat);
             }
-        } else { 
-            const literalCount = (controlByte & 0x7F) + 1; 
-            if (i + literalCount > buffer.length) { 
+        } else {
+            const literalCount = (controlByte & 0x7F) + 1;
+            if (i + literalCount > buffer.length) {
                 throw new Error("Malformed RLE data: literal sequence extends beyond buffer end.");
             }
             for (let j = 0; j < literalCount; j++) {
                 output.push(buffer[i + j]);
             }
-            i += literalCount; 
+            i += literalCount;
         }
     }
     console.log(`[RLE] Compressed: ${buffer.length} bytes, Decompressed: ${output.length} bytes`);
@@ -133,7 +133,7 @@ class BitStreamWriter {
     }
 
     writeBit(bit) {
-        this.byte = (this.byte << 1) | bit; 
+        this.byte = (this.byte << 1) | bit;
         this.bitCount++;
         if (this.bitCount === 8) {
             this.buffer.push(this.byte);
@@ -149,7 +149,7 @@ class BitStreamWriter {
     }
 
     getBytes() {
-        if (this.bitCount > 0) { 
+        if (this.bitCount > 0) {
             this.byte <<= (8 - this.bitCount);
             this.buffer.push(this.byte);
         }
@@ -161,15 +161,15 @@ class BitStreamReader {
     constructor(buffer) {
         this.buffer = buffer;
         this.currentByteIndex = 0;
-        this.currentBitInByte = 7; 
+        this.currentBitInByte = 7;
     }
 
     readBit() {
         if (this.currentByteIndex >= this.buffer.length) {
-            return null; 
+            return null;
         }
         const byte = this.buffer[this.currentByteIndex];
-        const bit = (byte >> this.currentBitInByte) & 1; 
+        const bit = (byte >> this.currentBitInByte) & 1;
         this.currentBitInByte--;
         if (this.currentBitInByte < 0) {
             this.currentBitInByte = 7;
@@ -180,7 +180,14 @@ class BitStreamReader {
 }
 
 const huffmanCompress = (buffer) => {
-    if (buffer.length === 0) return Buffer.from([0]); 
+    if (buffer.length === 0) {
+        // For an empty file, header will be 2 bytes (0 unique chars, 0 length)
+        const header = Buffer.alloc(2); // uniqueCharsCount as 0 (2 bytes)
+        header.writeUInt16BE(0, 0);
+        console.log(`[Huffman] Original: ${buffer.length} bytes, Compressed: ${header.length} bytes`);
+        return header;
+    }
+
     const frequencies = new Map();
     for (const byte of buffer) {
         frequencies.set(byte, (frequencies.get(byte) || 0) + 1);
@@ -188,42 +195,77 @@ const huffmanCompress = (buffer) => {
 
     const nodes = Array.from(frequencies.entries())
         .map(([char, freq]) => new Node(char, freq))
-        .sort((a, b) => a.freq - b.freq); 
+        .sort((a, b) => {
+            if (a.freq === b.freq) {
+                if (a.char === null && b.char !== null) return 1;
+                if (a.char !== null && b.char === null) return -1;
+                if (a.char === null && b.char === null) return 0;
+                return a.char - b.char;
+            }
+            return a.freq - b.freq;
+        });
 
     while (nodes.length > 1) {
-        const left = nodes.shift(); 
+        const left = nodes.shift();
         const right = nodes.shift();
-        const parent = new Node(null, left.freq + right.freq, left, right); 
+        const parent = new Node(null, left.freq + right.freq, left, right);
         let inserted = false;
         for (let i = 0; i < nodes.length; i++) {
-            if (parent.freq < nodes[i].freq) {
-                nodes.splice(i, 0, parent);
-                inserted = true;
-                break;
+            if (parent.freq < nodes[i].freq || (parent.freq === nodes[i].freq && (nodes[i].char === null || parent.char - nodes[i].char < 0))) {
+                if (parent.freq < nodes[i].freq) {
+                    nodes.splice(i, 0, parent);
+                    inserted = true;
+                    break;
+                } else if (parent.freq === nodes[i].freq) {
+                    let comparison = 0;
+                    if (parent.char === null && nodes[i].char !== null) comparison = 1;
+                    else if (parent.char !== null && nodes[i].char === null) comparison = -1;
+                    else if (parent.char !== null && nodes[i].char !== null) comparison = parent.char - nodes[i].char;
+
+                    if (comparison < 0) {
+                        nodes.splice(i, 0, parent);
+                        inserted = true;
+                        break;
+                    }
+                }
             }
         }
         if (!inserted) {
-            nodes.push(parent); 
+            nodes.push(parent);
         }
+        nodes.sort((a, b) => {
+            if (a.freq === b.freq) {
+                if (a.char === null && b.char !== null) return 1;
+                if (a.char !== null && b.char === null) return -1;
+                if (a.char === null && b.char === null) return 0;
+                return a.char - b.char;
+            }
+            return a.freq - b.freq;
+        });
     }
-    const root = nodes[0]; 
+    const root = nodes[0];
+
     const codes = new Map();
     function generateCodes(node, currentCode) {
-        if (node.char !== null) { 
+        if (node.char !== null) {
             codes.set(node.char, currentCode);
             return;
         }
-        generateCodes(node.left, currentCode + '0'); 
-        generateCodes(node.right, currentCode + '1'); 
+        generateCodes(node.left, currentCode + '0');
+        generateCodes(node.right, currentCode + '1');
     }
     if (root) {
-        if (root.char !== null) { 
-            codes.set(root.char, '0'); 
+        // Special case: only one unique character in the entire buffer
+        // Its code is '0' and it's implicitly a leaf node.
+        if (root.char !== null) {
+            codes.set(root.char, '0');
         } else {
-            generateCodes(root, ''); 
+            generateCodes(root, '');
         }
     } else {
-      
+        // This case should ideally not be reachable for non-empty buffer,
+        // but defensive check to return empty buffer if root is unexpectedly null
+        console.error("[Huffman Compress ERROR] Root node is null for non-empty buffer after tree building.");
         return Buffer.from([]);
     }
 
@@ -233,50 +275,85 @@ const huffmanCompress = (buffer) => {
         if (code) {
             writer.writeBits(code);
         } else {
-     
-            throw new Error(`Huffman: No code found for byte ${byte}`); 
+            throw new Error(`Huffman: No code found for byte ${byte}`);
         }
     }
     const encodedData = writer.getBytes();
 
     const uniqueCharsCount = frequencies.size;
-    const headerParts = [Buffer.from([uniqueCharsCount])]; 
+    const headerParts = [];
 
+    // MODIFIED: Write uniqueCharsCount as 2 bytes (UInt16BE)
+    const uniqueCharsCountBuffer = Buffer.alloc(2);
+    uniqueCharsCountBuffer.writeUInt16BE(uniqueCharsCount, 0);
+    headerParts.push(uniqueCharsCountBuffer);
+
+    // Write frequency as 4 bytes (32-bit integer)
     for (const [char, freq] of frequencies.entries()) {
-        headerParts.push(Buffer.from([char])); 
-        headerParts.push(Buffer.from([(freq >> 8) & 0xFF, freq & 0xFF])); 
+        headerParts.push(Buffer.from([char]));
+        const freqBuffer = Buffer.alloc(4);
+        freqBuffer.writeUInt32BE(freq, 0);
+        headerParts.push(freqBuffer);
     }
     const header = Buffer.concat(headerParts);
 
     const compressedBuffer = Buffer.concat([header, encodedData]);
     console.log(`[Huffman] Original: ${buffer.length} bytes, Compressed: ${compressedBuffer.length} bytes`);
-    return compressedBuffer;
+    return Buffer.from(compressedBuffer);
 };
 
 const huffmanDecompress = (buffer) => {
-    if (buffer.length === 0) return Buffer.from([]);
-
-    
-    const uniqueCharsCount = buffer[0];
-    let offset = 1; 
-    const frequencies = new Map();
-
-    if (uniqueCharsCount === 0) {
-        if (buffer.length > 1) { /*console.warn("Huffman Decompress: Header indicates 0 unique chars but data present. Ignoring extra data.");*/ }
+    console.log(`[Huffman Decompress] Received buffer length: ${buffer.length} bytes`);
+    if (buffer.length < 2) { // Need at least 2 bytes for uniqueCharsCount
+        console.log(`[Huffman Decompress] Input buffer too short for header. Returning empty buffer.`);
         return Buffer.from([]);
     }
 
-    for (let i = 0; i < uniqueCharsCount; i++) {
-        const char = buffer[offset];
-        const freq = (buffer[offset + 1] << 8) | buffer[offset + 2]; 
-        frequencies.set(char, freq);
-        offset += 3; 
+    // MODIFIED: Read uniqueCharsCount as 2 bytes (UInt16BE)
+    const uniqueCharsCount = buffer.readUInt16BE(0);
+    let offset = 2; // Start reading after uniqueCharsCount (2 bytes)
+    const frequencies = new Map();
+
+    if (uniqueCharsCount === 0) {
+        if (buffer.length > 2) { // For an empty original file, uniqueCharsCount is 0, and buffer length should be 2.
+            console.error(`[Huffman Decompress ERROR] Header indicates 0 unique chars but buffer length is ${buffer.length}.`);
+            throw new Error("Huffman Decompress: Malformed compressed data - 0 unique chars with extra data.");
+        }
+        console.log(`[Huffman Decompress] Header indicates 0 unique chars. Returning empty buffer.`);
+        return Buffer.from([]);
     }
 
+    // MODIFIED: Expected header length now accounts for 2 bytes for uniqueCharsCount and 4 bytes per frequency
+    const expectedHeaderLength = 2 + (uniqueCharsCount * (1 + 4)); // 2 bytes for uniqueCharsCount + (1 byte char + 4 bytes freq) per entry
+    if (buffer.length < expectedHeaderLength) {
+        console.error(`[Huffman Decompress ERROR] Buffer too short for header. Expected at least ${expectedHeaderLength}, got ${buffer.length}.`);
+        throw new Error(`Huffman Decompress: Malformed header - buffer too short for ${uniqueCharsCount} unique chars. Expected at least ${expectedHeaderLength} bytes, got ${buffer.length}.`);
+    }
+
+    // Read frequency as 4 bytes
+    for (let i = 0; i < uniqueCharsCount; i++) {
+        if (offset + 4 >= buffer.length) { // Need 1 byte for char + 4 bytes for freq
+            console.error(`[Huffman Decompress ERROR] Ran out of buffer parsing frequency entry ${i}/${uniqueCharsCount}.`);
+            throw new Error("Huffman Decompress: Malformed frequency table - buffer ended prematurely.");
+        }
+        const char = buffer[offset];
+        const freq = buffer.readUInt32BE(offset + 1);
+        frequencies.set(char, freq);
+        offset += 5; // Advance 1 for char + 4 for freq
+    }
+    console.log(`[Huffman Decompress] Header parsed. Unique chars: ${uniqueCharsCount}. Data starts at offset: ${offset}`);
 
     const leaves = Array.from(frequencies.entries())
         .map(([char, freq]) => new Node(char, freq))
-        .sort((a, b) => a.freq - b.freq);
+        .sort((a, b) => { // MUST mirror the compression sort for deterministic tree building
+            if (a.freq === b.freq) {
+                if (a.char === null && b.char !== null) return 1;
+                if (a.char !== null && b.char === null) return -1;
+                if (a.char === null && b.char === null) return 0;
+                return a.char - b.char;
+            }
+            return a.freq - b.freq;
+        });
 
     const nodes = [...leaves];
     while (nodes.length > 1) {
@@ -289,202 +366,101 @@ const huffmanDecompress = (buffer) => {
                 nodes.splice(i, 0, parent);
                 inserted = true;
                 break;
+            } else if (parent.freq === nodes[i].freq) {
+                let comparison = 0;
+                if (parent.char === null && nodes[i].char !== null) comparison = 1;
+                else if (parent.char !== null && nodes[i].char === null) comparison = -1;
+                else if (parent.char !== null && nodes[i].char !== null) comparison = parent.char - nodes[i].char;
+
+                if (comparison < 0) {
+                    nodes.splice(i, 0, parent);
+                    inserted = true;
+                    break;
+                }
             }
         }
         if (!inserted) {
             nodes.push(parent);
         }
+        nodes.sort((a, b) => {
+            if (a.freq === b.freq) {
+                if (a.char === null && b.char !== null) return 1;
+                if (a.char !== null && b.char === null) return -1;
+                if (a.char === null && b.char === null) return 0;
+                return a.char - b.char;
+            }
+            return a.freq - b.freq;
+        });
     }
     const root = nodes[0];
+    console.log(`[Huffman Decompress] Huffman tree rebuilt.`);
 
-   
+    const totalOriginalChars = Array.from(frequencies.values()).reduce((sum, freq) => sum + freq, 0);
+    console.log(`[Huffman Decompress] Total expected original characters: ${totalOriginalChars}`);
+
     if (uniqueCharsCount === 1) {
         const [char, freq] = Array.from(frequencies.entries())[0];
         const output = [];
         for (let i = 0; i < freq; i++) {
             output.push(char);
         }
+        if (output.length !== totalOriginalChars) {
+             console.error(`[Huffman Decompress ERROR] Single char: Decompressed length mismatch. Expected ${totalOriginalChars}, got ${output.length}.`);
+             throw new Error(`Huffman Decompress (single char): Decompressed length mismatch. Expected ${totalOriginalChars}, got ${output.length}.`);
+        }
+        console.log(`[Huffman Decompress] Single char file handled. Decompressed size: ${output.length} bytes.`);
         return Buffer.from(output);
     }
 
+    const encodedDataBuffer = buffer.slice(offset);
+    console.log(`[Huffman Decompress] Encoded data buffer length: ${encodedDataBuffer.length} bytes.`);
+    
+    if (totalOriginalChars > 0 && encodedDataBuffer.length === 0) {
+        console.error(`[Huffman Decompress ERROR] No encoded data found but expected ${totalOriginalChars} chars.`);
+        throw new Error("Huffman Decompress: No encoded data found after header, but totalOriginalChars is positive. Compressed data might be missing or truncated.");
+    }
 
-    const reader = new BitStreamReader(buffer.slice(offset)); 
+    const reader = new BitStreamReader(encodedDataBuffer);
     const output = [];
     let currentNode = root;
-
-    let bit;
     let decodedCharsCount = 0;
-    const totalOriginalChars = Array.from(frequencies.values()).reduce((sum, freq) => sum + freq, 0);
-
-    while ((bit = reader.readBit()) !== null && decodedCharsCount < totalOriginalChars) {
-        if (bit === 0) {
-            currentNode = currentNode.left; 
-        } else {
-            currentNode = currentNode.right; 
+    
+    while (decodedCharsCount < totalOriginalChars) {
+        const bit = reader.readBit();
+        if (bit === null) {
+            console.error(`[Huffman Decompress ERROR] Ran out of bits at decodedChar ${decodedCharsCount}/${totalOriginalChars}.`);
+            throw new Error(`Huffman Decompress: Ran out of bits before decoding all ${totalOriginalChars} characters. Decoded ${decodedCharsCount}. Compressed data might be truncated or malformed.`);
         }
 
-        if (currentNode.char !== null) { 
+        if (bit === 0) {
+            if (!currentNode.left) {
+                console.error(`[Huffman Decompress ERROR] Invalid path: '0' bit but no left child at node. Current node char: ${currentNode.char}, freq: ${currentNode.freq}. Decoded: ${decodedCharsCount}.`);
+                throw new Error("Huffman Decompress: Invalid Huffman code encountered (no left child). Corrupted data or tree mismatch.");
+            }
+            currentNode = currentNode.left;
+        } else {
+            if (!currentNode.right) {
+                console.error(`[Huffman Decompress ERROR] Invalid path: '1' bit but no right child at node. Current node char: ${currentNode.char}, freq: ${currentNode.freq}. Decoded: ${decodedCharsCount}.`);
+                throw new Error("Huffman Decompress: Invalid Huffman code encountered (no right child). Corrupted data or tree mismatch.");
+            }
+            currentNode = currentNode.right;
+        }
+
+        if (currentNode.char !== null) {
             output.push(currentNode.char);
             decodedCharsCount++;
-            currentNode = root; 
+            currentNode = root;
         }
     }
+    if (output.length !== totalOriginalChars) {
+        console.error(`[Huffman Decompress ERROR] Final decompressed length mismatch. Expected ${totalOriginalChars}, got ${output.length}.`);
+        throw new Error(`Huffman Decompress: Decompressed length mismatch. Expected ${totalOriginalChars}, got ${output.length}.`);
+    }
+
     console.log(`[Huffman] Compressed: ${buffer.length} bytes, Decompressed: ${output.length} bytes`);
     return Buffer.from(output);
 };
 
-const LZ77_WINDOW_SIZE = 4096; 
-const LZ77_MIN_MATCH = 3;      
-const LZ77_MAX_MATCH = 10;     
-const LZ77_LITERAL_ESCAPE = 0x80; 
-
-const hashBytes = (b1, b2, b3) => (b1 << 16) | (b2 << 8) | b3;
-
-const lz77Compress = (buffer) => {
-    const output = [];
-    let i = 0; 
-    const dictionary = new Map();
-
-    while (i < buffer.length) {
-        let bestMatch = { offset: 0, length: 0 };
-        
-        dictionary.forEach((positions, key) => {
-            while (positions.length > 0 && positions[0] < i - LZ77_WINDOW_SIZE) {
-                positions.shift();
-            }
-            if (positions.length === 0) {
-                dictionary.delete(key); 
-            }
-        });
-
-        if (i + LZ77_MIN_MATCH <= buffer.length) {
-            const currentHashKey = hashBytes(buffer[i], buffer[i+1], buffer[i+2]);
-
-            if (dictionary.has(currentHashKey)) {
-                const potentialMatchStarts = dictionary.get(currentHashKey);
-
-              
-                for (let k = potentialMatchStarts.length - 1; k >= 0; k--) {
-                    const startIdx = potentialMatchStarts[k];
-                  
-                    if (startIdx >= i - LZ77_WINDOW_SIZE && startIdx < i) {
-                        let currentMatchLength = 0;
-                       
-                        while (
-                            (i + currentMatchLength < buffer.length) && 
-                            (currentMatchLength < LZ77_MAX_MATCH) &&   
-                            (buffer[startIdx + currentMatchLength] === buffer[i + currentMatchLength])
-                        ) {
-                            currentMatchLength++;
-                        }
-                      
-                        if (currentMatchLength > bestMatch.length) {
-                            bestMatch = { offset: i - startIdx, length: currentMatchLength };
-                          
-                            if (bestMatch.length === LZ77_MAX_MATCH) break;
-                        }
-                    }
-                }
-            }
-        }
-
-      
-        if (bestMatch.length >= LZ77_MIN_MATCH && bestMatch.offset > 0) {
-        
-            const lengthCode = bestMatch.length - LZ77_MIN_MATCH; 
-            const offsetHigh = (bestMatch.offset >> 8) & 0x0F; 
-            const offsetLow = bestMatch.offset & 0xFF;        
-
-            const byte1 = 0x80 | (lengthCode << 4) | offsetHigh;
-            output.push(byte1);
-            output.push(offsetLow);
-
-            
-            for (let p = i; p < i + bestMatch.length; p++) {
-                if (p + LZ77_MIN_MATCH <= buffer.length) { 
-                    const hash = hashBytes(buffer[p], buffer[p+1], buffer[p+2]);
-                    if (!dictionary.has(hash)) {
-                        dictionary.set(hash, []);
-                    }
-                    dictionary.get(hash).push(p);
-                }
-            }
-            
-            i += bestMatch.length;
-        } else {
-          
-            const currentByte = buffer[i];
-            if (currentByte < LZ77_LITERAL_ESCAPE) { 
-                output.push(currentByte); 
-            } else { 
-                output.push(LZ77_LITERAL_ESCAPE); 
-                output.push(currentByte);       
-            }
-            
-         
-            if (i + LZ77_MIN_MATCH <= buffer.length) { 
-                const hash = hashBytes(buffer[i], buffer[i+1], buffer[i+2]);
-                if (!dictionary.has(hash)) {
-                    dictionary.set(hash, []);
-                }
-                dictionary.get(hash).push(i);
-            }
-           
-            i++;
-        }
-    }
-    console.log(`[LZ77] Original: ${buffer.length} bytes, Compressed: ${output.length} bytes`);
-    return Buffer.from(output);
-};
-
-const lz77Decompress = (buffer) => {
-    const output = [];
-    let i = 0; 
-
-    while (i < buffer.length) {
-        const byte1 = buffer[i];
-
-        if ((byte1 & 0x80) === 0) { 
-            if (byte1 === LZ77_LITERAL_ESCAPE) { 
-                if (i + 1 >= buffer.length) {
-                    throw new Error("LZ77 Decompress: Malformed literal escape sequence - missing second byte.");
-                }
-                output.push(buffer[i + 1]); 
-                i += 2; 
-            } else { 
-                output.push(byte1);
-                i++; 
-            }
-        } else { 
-            if (i + 1 >= buffer.length) { 
-                throw new Error("LZ77 Decompress: Malformed match tuple - not enough bytes.");
-            }
-            const byte2 = buffer[i + 1];
-
-            const length = ((byte1 >> 4) & 0x07) + LZ77_MIN_MATCH; 
-            const offsetHigh = byte1 & 0x0F;                      
-            const offsetLow = byte2;                               
-            const offset = (offsetHigh << 8) | offsetLow;         
-
-          
-            if (offset === 0) { 
-                throw new Error(`LZ77 Decompress: Invalid match - offset cannot be zero (at compressed byte ${i}).`);
-            }
-            if (output.length < offset) { 
-                throw new Error(`LZ77 Decompress: Invalid match (offset ${offset}, length ${length}) at compressed byte ${i}. Output length: ${output.length}. The offset points outside the already decompressed data. Ensure the file was compressed with the correct algorithm and is not corrupted.`);
-            }
-
-           
-            const copySourceIndex = output.length - offset;
-            for (let j = 0; j < length; j++) {
-                output.push(output[copySourceIndex + j]); 
-            }
-            i += 2; 
-        }
-    }
-    console.log(`[LZ77] Compressed: ${buffer.length} bytes, Decompressed: ${output.length} bytes`);
-    return Buffer.from(output);
-};
 
 const gzipCompress = (buffer) => {
     try {
@@ -508,8 +484,6 @@ const gzipDecompress = (buffer) => {
     }
 };
 
-
-
 const compressFile = (filePath, algorithm, originalFileName) => {
     const startTime = process.hrtime.bigint();
     
@@ -530,14 +504,9 @@ const compressFile = (filePath, algorithm, originalFileName) => {
                 compressedContentBuffer = huffmanCompress(fileContentBuffer);
                 outputFileName = `${baseName}_huf_compressed${originalExtension}`;
                 break;
-            case 'lz77':
-                compressedContentBuffer = lz77Compress(fileContentBuffer);
-                outputFileName = `${baseName}_lz77_compressed${originalExtension}`;
-                break;
             case 'gzip':
                 compressedContentBuffer = gzipCompress(fileContentBuffer);
-                
-                outputFileName = `${baseName}_gz${originalExtension}`; 
+                outputFileName = `${baseName}_gz${originalExtension}`;
                 break;
             default:
                 throw new Error('Unsupported compression algorithm');
@@ -588,18 +557,13 @@ const decompressFile = (filePath, algorithm, originalFileName) => {
                 decompressedContentBuffer = huffmanDecompress(compressedContentBuffer);
                 outputFileName = `${baseName}_decompressed${originalExtension}`;
                 break;
-            case 'lz77':
-                decompressedContentBuffer = lz77Decompress(compressedContentBuffer);
-                outputFileName = `${baseName}_decompressed${originalExtension}`;
-                break;
             case 'gzip':
                 decompressedContentBuffer = gzipDecompress(compressedContentBuffer);
-                
                 if (originalFileName.includes('_gz')) {
                      outputFileName = originalFileName.replace(/_gz/, '_decompressed');
                 } else if (originalFileName.includes('_compressed')) {
                     outputFileName = originalFileName.replace(/_compressed/, '_decompressed');
-                } else { 
+                } else {
                     if (originalFileName.endsWith('.gz')) {
                         outputFileName = path.basename(originalFileName, '.gz') + '_decompressed';
                     } else {
@@ -629,9 +593,6 @@ const decompressFile = (filePath, algorithm, originalFileName) => {
         throw new Error(`Decompression failed: ${error.message}. Ensure the file was compressed with the correct algorithm and is not corrupted.`);
     }
 };
-
-
-// --- API Endpoints ---
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
@@ -713,7 +674,6 @@ app.get('/api/download/:fileName', (req, res) => {
         res.status(404).json({ message: 'File not found for download.' });
     }
 });
-
 
 app.listen(PORT, () => {
     console.log(`Backend server running on port ${PORT}`);
