@@ -30,7 +30,7 @@ function HomePage({ isDarkMode }) {
                     <div>
                         <h3 className="text-2xl font-semibold text-blue-600 dark:text-blue-400 mb-2">Gzip (DEFLATE)</h3>
                         <p className="text-gray-700 dark:text-gray-300">
-                            Gzip is a widely used data compression program that leverages the **DEFLATE algorithm**. DEFLATE is a combination of LZ77 (for finding repeated sequences) and Huffman coding (for compactly representing the sequence tokens). It's a highly effective general-purpose lossless data compression algorithm, commonly used for web content, file archiving, and software distribution. It generally provides good compression ratios for a wide variety of data types, including text, images, and binary files, making it the **recommended choice for most files on this portal.**
+                            Gzip is a widely used data compression program that leverages the **DEFLATE algorithm**. DEFLATE is a combination of a dictionary-based approach for finding repeated sequences and Huffman coding for compactly representing the sequence tokens. It's a highly effective general-purpose lossless data compression algorithm, commonly used for web content, file archiving, and software distribution. It generally provides good compression ratios for a wide variety of data types, including text, images, and binary files, making it the **recommended choice for most files on this portal.**
                         </p>
                     </div>
                     <div>
@@ -45,12 +45,7 @@ function HomePage({ isDarkMode }) {
                             Huffman coding is a variable-length coding algorithm where the most frequent characters are assigned the shortest codes, and the least frequent characters are assigned the longest codes. This statistical compression method is lossless, meaning no data is lost during compression. It's often used as a component within other compression algorithms (like DEFLATE). Its effectiveness depends on the frequency distribution of characters in the data.
                         </p>
                     </div>
-                    <div>
-                        <h3 className="text-2xl font-semibold text-yellow-600 dark:text-yellow-400 mb-2">LZ77 Algorithm</h3>
-                        <p className="text-gray-700 dark:text-gray-300">
-                            LZ77 is a dictionary-based lossless compression algorithm. It works by finding repeated sequences of data (matches) that have occurred previously in a "sliding window" of the already processed data. Instead of writing the repeated sequence, it writes a pointer to the previous occurrence (an offset) and the length of the match. Literal (unmatched) bytes are written directly. LZ77 forms the basis for many modern compression formats, including ZIP and PNG.
-                        </p>
-                    </div>
+                    {/* The LZ77 Algorithm section has been completely removed from here. */}
                 </div>
             </div>
         </div>
