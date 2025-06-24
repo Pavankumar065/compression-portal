@@ -8,16 +8,20 @@ const zlib = require('zlib');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Configure CORS
-// Render will provide process.env.FRONTEND_URL for the deployed frontend URL.
-// For local development, it will default to http://localhost:3000 (React dev server).
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+// --- Debugging for FRONTEND_URL ---
+console.log('Attempting to read FRONTEND_URL from environment...');
+const rawFrontendUrl = process.env.FRONTEND_URL;
+console.log(`Raw FRONTEND_URL from process.env: "${rawFrontendUrl}"`); // IMPORTANT: Check this line in Render logs
+
+const allowedOrigin = rawFrontendUrl || 'http://localhost:3000';
+console.log(`Calculated allowedOrigin for CORS: "${allowedOrigin}"`); // IMPORTANT: Check this line in Render logs
+// --- End Debugging for FRONTEND_URL ---
 
 app.use(cors({
   origin: allowedOrigin,
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', // Allow common HTTP methods
-  credentials: true, // Allow cookies/auth headers to be sent (if any, generally not needed for this app but good practice)
-  optionsSuccessStatus: 204 // For preflight requests
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  credentials: true,
+  optionsSuccessStatus: 204
 }));
 
 app.use(express.json());
@@ -701,7 +705,7 @@ app.get('/api/download/:fileName', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Backend server running on port ${PORT}`);
-    console.log(`Allowed frontend origin for CORS: ${allowedOrigin}`); // Log the allowed origin
+    console.log(`Allowed frontend origin for CORS: ${allowedOrigin}`); // This line is for debugging, will show the final allowed origin
     console.log(`Uploads directory: ${UPLOADS_DIR}`);
     console.log(`Compressed files directory: ${COMPRESSED_DIR}`);
 });
