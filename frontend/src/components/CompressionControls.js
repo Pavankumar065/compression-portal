@@ -1,4 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
+import axios from 'axios';
+import { formatBytes } from '../utils/formatBytes';
+
+// Define your API base URL.
+// In a production environment (like Render), process.env.REACT_APP_API_BASE_URL will be set.
+// For local development, it will fall back to 'http://localhost:5000'.
+// const API_BASE_URL = 'http://localhost:5000'; // OLD line
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000'; // NEW line
 
 function CompressionControls({ selectedAlgorithm, onSelectAlgorithm, onProcessFile, loading, actionType }) {
     // Defines the available compression/decompression algorithms for the UI dropdown.
@@ -10,6 +18,9 @@ function CompressionControls({ selectedAlgorithm, onSelectAlgorithm, onProcessFi
         { value: 'rle', label: 'Run-Length Encoding (RLE) (Best for highly repetitive data, e.g., simple images)' },
         // The LZ77 option is no longer present here
     ];
+
+    // Note: The parent component (App.js) is managing selectedAlgorithm, onSelectAlgorithm,
+    // onProcessFile, loading, and actionType. This component is now purely for UI display.
 
     return (
         // Main container for the algorithm selection and processing buttons
