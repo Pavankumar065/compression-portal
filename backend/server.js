@@ -8,12 +8,24 @@ const zlib = require('zlib');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+// Configure CORS
+// Render will provide process.env.FRONTEND_URL for the deployed frontend URL.
+// For local development, it will default to http://localhost:3000 (React dev server).
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+app.use(cors({
+  origin: allowedOrigin,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', // Allow common HTTP methods
+  credentials: true, // Allow cookies/auth headers to be sent (if any, generally not needed for this app but good practice)
+  optionsSuccessStatus: 204 // For preflight requests
+}));
+
 app.use(express.json());
 
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const COMPRESSED_DIR = path.join(__dirname, 'compressed');
 
+// Create directories if they don't exist
 if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR);
 }
@@ -21,6 +33,7 @@ if (!fs.existsSync(COMPRESSED_DIR)) {
     fs.mkdirSync(COMPRESSED_DIR);
 }
 
+// Configure Multer for file uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, UPLOADS_DIR);
@@ -32,10 +45,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
+// --- UTILITY FUNCTIONS ---
 const readFileAsBuffer = (filePath) => fs.readFileSync(filePath);
 const writeBufferToFile = (filePath, buffer) => fs.writeFileSync(filePath, buffer);
 
-const RLE_MAX_COUNT = 128;
+// --- RLE (Run-Length Encoding) ---
+const RLE_MAX_COUNT = 128; // Max length for a literal sequence or a repeat run
 
 const rleCompress = (buffer) => {
     const output = [];
@@ -54,7 +69,7 @@ const rleCompress = (buffer) => {
         }
 
         if (runLength >= 2) {
-            output.push((runLength - 1) | 0x80);
+            output.push((runLength - 1) | 0x80); // Set MSB (1xxxxxxx), store (length-1)
             output.push(currentByte);
             i += runLength;
         } else {
@@ -75,7 +90,7 @@ const rleCompress = (buffer) => {
                 i = literalStartIdx + 1;
             }
 
-            output.push(literalCount - 1);
+            output.push(literalCount - 1); // MSB is 0 (0xxxxxxx), store (count-1)
             for (let k = 0; k < literalCount; k++) {
                 output.push(buffer[literalStartIdx + k]);
             }
@@ -92,7 +107,7 @@ const rleDecompress = (buffer) => {
     while (i < buffer.length) {
         const controlByte = buffer[i++];
 
-        if (controlByte & 0x80) {
+        if (controlByte & 0x80) { // MSB is 1: Repeat block
             const runLength = (controlByte & 0x7F) + 1;
             if (i >= buffer.length) {
                 throw new Error("Malformed RLE data: run byte missing after control byte.");
@@ -101,7 +116,7 @@ const rleDecompress = (buffer) => {
             for (let j = 0; j < runLength; j++) {
                 output.push(byteToRepeat);
             }
-        } else {
+        } else { // MSB is 0: Literal block
             const literalCount = (controlByte & 0x7F) + 1;
             if (i + literalCount > buffer.length) {
                 throw new Error("Malformed RLE data: literal sequence extends beyond buffer end.");
@@ -116,6 +131,7 @@ const rleDecompress = (buffer) => {
     return Buffer.from(output);
 };
 
+// --- Huffman Coding ---
 class Node {
     constructor(char, freq, left = null, right = null) {
         this.char = char;
@@ -166,7 +182,7 @@ class BitStreamReader {
 
     readBit() {
         if (this.currentByteIndex >= this.buffer.length) {
-            return null;
+            return null; // End of stream
         }
         const byte = this.buffer[this.currentByteIndex];
         const bit = (byte >> this.currentBitInByte) & 1;
@@ -183,7 +199,7 @@ const huffmanCompress = (buffer) => {
     if (buffer.length === 0) {
         // For an empty file, header will be 2 bytes (0 unique chars, 0 length)
         const header = Buffer.alloc(2); // uniqueCharsCount as 0 (2 bytes)
-        header.writeUInt16BE(0, 0);
+        header.writeUInt16BE(0, 0); // Write 0 unique chars count
         console.log(`[Huffman] Original: ${buffer.length} bytes, Compressed: ${header.length} bytes`);
         return header;
     }
@@ -197,10 +213,12 @@ const huffmanCompress = (buffer) => {
         .map(([char, freq]) => new Node(char, freq))
         .sort((a, b) => {
             if (a.freq === b.freq) {
+                // Secondary sort key for deterministic tree building
+                // Internal nodes (char === null) should consistently sort last for equal frequencies
                 if (a.char === null && b.char !== null) return 1;
                 if (a.char !== null && b.char === null) return -1;
-                if (a.char === null && b.char === null) return 0;
-                return a.char - b.char;
+                if (a.char === null && b.char === null) return 0; // Maintain original relative order if both are internal
+                return a.char - b.char; // Sort by character code for leaves
             }
             return a.freq - b.freq;
         });
@@ -233,6 +251,7 @@ const huffmanCompress = (buffer) => {
         if (!inserted) {
             nodes.push(parent);
         }
+        // Re-sort after insertion for perfect consistency, matching initial sort logic
         nodes.sort((a, b) => {
             if (a.freq === b.freq) {
                 if (a.char === null && b.char !== null) return 1;
@@ -247,24 +266,21 @@ const huffmanCompress = (buffer) => {
 
     const codes = new Map();
     function generateCodes(node, currentCode) {
-        if (node.char !== null) {
+        if (node.char !== null) { // Leaf node (represents an actual byte)
             codes.set(node.char, currentCode);
             return;
         }
-        generateCodes(node.left, currentCode + '0');
-        generateCodes(node.right, currentCode + '1');
+        generateCodes(node.left, currentCode + '0'); // Go left, append '0'
+        generateCodes(node.right, currentCode + '1'); // Go right, append '1'
     }
     if (root) {
-        // Special case: only one unique character in the entire buffer
-        // Its code is '0' and it's implicitly a leaf node.
-        if (root.char !== null) {
-            codes.set(root.char, '0');
+        if (root.char !== null) { // Special case: only one unique character in the entire buffer
+            codes.set(root.char, '0'); // Assign a code of '0' for this single char
         } else {
-            generateCodes(root, '');
+            generateCodes(root, ''); // Start code generation from root with empty string
         }
     } else {
-        // This case should ideally not be reachable for non-empty buffer,
-        // but defensive check to return empty buffer if root is unexpectedly null
+        // Should not happen for non-empty buffer, but defensive check
         console.error("[Huffman Compress ERROR] Root node is null for non-empty buffer after tree building.");
         return Buffer.from([]);
     }
@@ -275,7 +291,8 @@ const huffmanCompress = (buffer) => {
         if (code) {
             writer.writeBits(code);
         } else {
-            throw new Error(`Huffman: No code found for byte ${byte}`);
+            // This indicates an error in frequency calculation or code generation
+            throw new Error(`Huffman: No code found for byte ${byte}`); 
         }
     }
     const encodedData = writer.getBytes();
@@ -283,16 +300,16 @@ const huffmanCompress = (buffer) => {
     const uniqueCharsCount = frequencies.size;
     const headerParts = [];
 
-    // MODIFIED: Write uniqueCharsCount as 2 bytes (UInt16BE)
+    // Write uniqueCharsCount as 2 bytes (16-bit integer)
     const uniqueCharsCountBuffer = Buffer.alloc(2);
-    uniqueCharsCountBuffer.writeUInt16BE(uniqueCharsCount, 0);
+    uniqueCharsCountBuffer.writeUInt16BE(uniqueCharsCount, 0); // Writes 16-bit unsigned integer (big-endian)
     headerParts.push(uniqueCharsCountBuffer);
 
-    // Write frequency as 4 bytes (32-bit integer)
+    // Write each character and its frequency (4 bytes for frequency)
     for (const [char, freq] of frequencies.entries()) {
-        headerParts.push(Buffer.from([char]));
+        headerParts.push(Buffer.from([char])); // Add the byte itself
         const freqBuffer = Buffer.alloc(4);
-        freqBuffer.writeUInt32BE(freq, 0);
+        freqBuffer.writeUInt32BE(freq, 0); // Writes 32-bit unsigned integer (big-endian)
         headerParts.push(freqBuffer);
     }
     const header = Buffer.concat(headerParts);
@@ -309,7 +326,7 @@ const huffmanDecompress = (buffer) => {
         return Buffer.from([]);
     }
 
-    // MODIFIED: Read uniqueCharsCount as 2 bytes (UInt16BE)
+    // Read uniqueCharsCount as 2 bytes (UInt16BE)
     const uniqueCharsCount = buffer.readUInt16BE(0);
     let offset = 2; // Start reading after uniqueCharsCount (2 bytes)
     const frequencies = new Map();
@@ -323,21 +340,21 @@ const huffmanDecompress = (buffer) => {
         return Buffer.from([]);
     }
 
-    // MODIFIED: Expected header length now accounts for 2 bytes for uniqueCharsCount and 4 bytes per frequency
+    // Expected header length now accounts for 2 bytes for uniqueCharsCount and 4 bytes per frequency
     const expectedHeaderLength = 2 + (uniqueCharsCount * (1 + 4)); // 2 bytes for uniqueCharsCount + (1 byte char + 4 bytes freq) per entry
     if (buffer.length < expectedHeaderLength) {
         console.error(`[Huffman Decompress ERROR] Buffer too short for header. Expected at least ${expectedHeaderLength}, got ${buffer.length}.`);
         throw new Error(`Huffman Decompress: Malformed header - buffer too short for ${uniqueCharsCount} unique chars. Expected at least ${expectedHeaderLength} bytes, got ${buffer.length}.`);
     }
 
-    // Read frequency as 4 bytes
+    // Read each character and its frequency (4 bytes for frequency)
     for (let i = 0; i < uniqueCharsCount; i++) {
         if (offset + 4 >= buffer.length) { // Need 1 byte for char + 4 bytes for freq
             console.error(`[Huffman Decompress ERROR] Ran out of buffer parsing frequency entry ${i}/${uniqueCharsCount}.`);
             throw new Error("Huffman Decompress: Malformed frequency table - buffer ended prematurely.");
         }
         const char = buffer[offset];
-        const freq = buffer.readUInt32BE(offset + 1);
+        const freq = buffer.readUInt32BE(offset + 1); // Read 32-bit unsigned integer (big-endian)
         frequencies.set(char, freq);
         offset += 5; // Advance 1 for char + 4 for freq
     }
@@ -462,6 +479,7 @@ const huffmanDecompress = (buffer) => {
 };
 
 
+// --- GZIP Compression (using Node.js built-in zlib) ---
 const gzipCompress = (buffer) => {
     try {
         const compressedBuffer = zlib.gzipSync(buffer);
@@ -483,6 +501,9 @@ const gzipDecompress = (buffer) => {
         throw new Error('Gzip decompression failed. Is the file really gzip compressed?');
     }
 };
+
+
+// --- Core Compression/Decompression Logic ---
 
 const compressFile = (filePath, algorithm, originalFileName) => {
     const startTime = process.hrtime.bigint();
@@ -506,7 +527,7 @@ const compressFile = (filePath, algorithm, originalFileName) => {
                 break;
             case 'gzip':
                 compressedContentBuffer = gzipCompress(fileContentBuffer);
-                outputFileName = `${baseName}_gz${originalExtension}`;
+                outputFileName = `${baseName}_gz${originalExtension}`; 
                 break;
             default:
                 throw new Error('Unsupported compression algorithm');
@@ -594,6 +615,9 @@ const decompressFile = (filePath, algorithm, originalFileName) => {
     }
 };
 
+
+// --- API Endpoints ---
+
 app.post('/api/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded.' });
@@ -677,6 +701,7 @@ app.get('/api/download/:fileName', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Backend server running on port ${PORT}`);
+    console.log(`Allowed frontend origin for CORS: ${allowedOrigin}`); // Log the allowed origin
     console.log(`Uploads directory: ${UPLOADS_DIR}`);
     console.log(`Compressed files directory: ${COMPRESSED_DIR}`);
 });
